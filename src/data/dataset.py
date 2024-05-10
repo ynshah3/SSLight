@@ -9,8 +9,8 @@ class Subset(torch.utils.data.Dataset):
         self.indices = indices
 
     def __getitem__(self, idx):
-        _, x, y = self.dataset[self.indices[idx]]
-        return idx, x, y
+        x, y = self.dataset[self.indices[idx]]
+        return x, y
         
     def __len__(self):
         return len(self.indices)

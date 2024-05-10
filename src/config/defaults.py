@@ -18,7 +18,7 @@ _C.TRAIN.DATASET = "imagenet1k"
 
 _C.TRAIN.NUM_CLASSES = 1000
 
-_C.TRAIN.FILE_NAME = 'train.h5'
+_C.TRAIN.FILE_NAME = 'train'
 
 # Subset for ablations
 _C.TRAIN.SUBSET_FILE_PATH = ''
@@ -27,10 +27,10 @@ _C.TRAIN.SUBSET_FILE_PATH = ''
 _C.TRAIN.BATCH_SIZE = 128
 
 # Save model checkpoint every checkpoint period epochs.
-_C.TRAIN.CHECKPOINT_PERIOD = 20
+_C.TRAIN.CHECKPOINT_PERIOD = 1
 
 # Path to the checkpoint to load the initial weight.
-_C.TRAIN.CHECKPOINT_FILE_PATH = ""
+_C.TRAIN.CHECKPOINT_FILE_PATH = "dino_r18_sslight.pth.tar"
 
 # On-the-fly linear probe
 _C.TRAIN.JOINT_LINEAR_PROBE = False
@@ -42,7 +42,7 @@ _C.VAL = CfgNode()
 
 _C.VAL.DATASET = "imagenet1k"
 
-_C.VAL.FILE_NAME = 'val.h5'
+_C.VAL.FILE_NAME = 'val'
 
 _C.VAL.SUBSET_FILE_PATH = ''
 
@@ -204,7 +204,7 @@ _C.DINO.WARMUP_TEACHER_TEMP = 0.04
 _C.DINO.TEACHER_TEMP = 0.07
 
 # Number of warmup epochs for the teacher temperature
-_C.DINO.WARMUP_TEACHER_TEMP_EPOCHS = 30
+_C.DINO.WARMUP_TEACHER_TEMP_EPOCHS = 0
 
 _C.DINO.CENTER_MOMENTUM = 0.9
 
@@ -259,7 +259,7 @@ _C.SOLVER.WEIGHT_DECAY_END = 0.0
 
 _C.SOLVER.TOTAL_EPOCHS = 300
 
-_C.SOLVER.WARMUP_EPOCHS = 10
+_C.SOLVER.WARMUP_EPOCHS = 1
 
 _C.SOLVER.START_WARMUP = 0.0
 
@@ -292,14 +292,14 @@ _C.SOLVER.MILESTONES = [60, 80]
 # Misc options
 # ---------------------------------------------------------------------------- #
 
-_C.LOG_STEP = 10
+_C.LOG_STEP = 1
 
 _C.LOG_GRAD = True
 
 # stage from [TRAIN, VAL, TEST, FT]
 _C.STAGE = "TRAIN" 
 
-_C.DISTRIBUTED = True
+_C.DISTRIBUTED = False
 
 _C.SEED = 0
 
@@ -319,7 +319,7 @@ _C.USE_FP16 = False
 
 _C.SSL_METHOD = "DINO"
 
-_C.NUM_GPUS_PER_NODE = 8
+_C.NUM_GPUS_PER_NODE = 1
 
 # this path works for mlp tensorboard only
 
@@ -327,7 +327,7 @@ _C.TENSORBOARD_PATH = "/tensorboard"
 
 
 # Output basedir.
-_C.OUTPUT_DIR = "./tmp"
+_C.OUTPUT_DIR = "./logs"
 
 
 def _assert_and_infer_cfg(cfg):

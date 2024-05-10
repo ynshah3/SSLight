@@ -26,7 +26,7 @@ logger = logging.get_logger(__name__)
 
 
 class CLSTrainer():
-    def __init__(self, gpu, ngpus_per_node, cfg):
+    def __init__(self, gpu, ngpus_per_node, cfg, i):
         self.cfg = cfg
         self.rank = 0
         self.node_rank = 0
@@ -77,7 +77,7 @@ class CLSTrainer():
         self.min_lr = cfg.SOLVER.MIN_LR
         
         """create the model"""
-        self.create_model()
+        self.create_model(i)
         if self.rank == 0:
             logger.info(f"Number of trainable parameters: {num_of_trainable_params(self.model)}")
         
@@ -138,9 +138,9 @@ class CLSTrainer():
             transforms.Normalize(mean=self.cfg.DATA.MEAN, std=self.cfg.DATA.STD)]
         )
         self.train_loader, self.num_examples   = self.data_ins.get_loader('TRAIN', self.train_batch_size, self.train_transforms)
-        self.val_loader, self.val_num_examples = self.data_ins.get_loader('TEST',  self.val_batch_size,   self.val_transforms)
+        self.val_loader, self.val_num_examples = self.data_ins.get_loader('VAL',  self.val_batch_size,   self.val_transforms)
 
-    def create_model(self):
+    def create_model(self, i):
         backbone_arch = self.cfg.MODEL.BACKBONE_ARCH
         eval_method = self.cfg.EVAL_METHOD
         logger.info("=> creating model '{}'".format(backbone_arch))
@@ -150,6 +150,12 @@ class CLSTrainer():
             self.model = models.__dict__[backbone_arch](pretrained=False)
 
         num_ps_1 = num_of_trainable_params(self.model)
+        
+        if self.pretrained_path != '':
+            state_dict = get_model_loader(backbone_arch, self.cfg.SSL_METHOD)(self.pretrained_path + f'DINO_resnet18_{i}.pth.tar', list(self.model.state_dict().keys()), use_head=False) 
+            print(state_dict)
+            msg = self.model.load_state_dict(state_dict, strict=False)
+            logger.info(f'Pretrained weights found at {self.pretrained_path} and loaded with msg: {msg}')
 
         if eval_method.lower() == 'semi':
             if 'mobilenet' in backbone_arch:
@@ -179,8 +185,7 @@ class CLSTrainer():
                     )
                 )
             else:
-                raise NotImplementedError
-            
+                raise NotImplementedError            
         elif eval_method.lower() == 'linear':
             for param in self.model.parameters():
                 param.requires_grad = False
@@ -210,11 +215,6 @@ class CLSTrainer():
             raise NotImplementedError
 
         num_ps_2 = num_of_trainable_params(self.model)
-
-        if self.pretrained_path != '':
-            state_dict = get_model_loader(backbone_arch, self.cfg.SSL_METHOD)(self.pretrained_path, list(self.model.state_dict().keys()), use_head=(eval_method.lower() == 'semi'))       
-            msg = self.model.load_state_dict(state_dict, strict=False)
-            logger.info(f'Pretrained weights found at {self.pretrained_path} and loaded with msg: {msg}')
 
         num_ps_3 = num_of_trainable_params(self.model)
         if self.rank == 0:

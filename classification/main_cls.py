@@ -45,19 +45,21 @@ def run_task(cfg):
 def main_worker(gpu, ngpus_per_node, cfg):
     cudnn.benchmark = True
 
-    best_acc1 = 0
-    trainer = trainer_tools.__dict__['CLSTrainer'](gpu, ngpus_per_node, cfg)
-    trainer.resume_model()
-    start_epoch = trainer.start_epoch
-    for epoch in range(start_epoch + 1, trainer.total_epochs + 1):
-        trainer.train_epoch(epoch)
-        acc1 = trainer.validate(epoch)
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
-        if trainer.rank == 0:
-            print('Best accuracy is: ', best_acc1.item())
-        trainer.save_checkpoint(epoch, best_acc1, is_best)
-        dist.barrier()
+    for i in range(34):
+        best_acc1 = 0
+        trainer = trainer_tools.__dict__['CLSTrainer'](gpu, ngpus_per_node, cfg, i)
+        #trainer.resume_model()
+        print('lesion iter', i)
+        start_epoch = trainer.start_epoch
+        for epoch in range(start_epoch + 1, trainer.total_epochs + 1):
+            trainer.train_epoch(epoch)
+            acc1 = trainer.validate(epoch)
+            is_best = acc1 > best_acc1
+            best_acc1 = max(acc1, best_acc1)
+            if trainer.rank == 0:
+                print('Best accuracy is: ', best_acc1.item())
+            trainer.save_checkpoint(epoch, best_acc1, is_best)
+            # dist.barrier()
 
             
 if __name__ == '__main__':

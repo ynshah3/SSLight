@@ -40,14 +40,9 @@ class ImageDatasetLoader():
         return data_loader, len(dataset)
 
     def get_dataset(self, stage, transforms):
-        file_name = self.cfg.TRAIN.FILE_NAME if stage.lower() in ('train', 'ft') else self.cfg.VAL.FILE_NAME
+        file_name = 'train' if stage.lower() in ('train', 'ft') else 'val'
         file_path = osp.join(self.data_dir, file_name)
-        if 'cifar' in self.cfg.TRAIN.DATASET.lower():
-            dataset = globals()[self.cfg.TRAIN.DATASET.upper()](self.data_dir, train=(stage.lower() in ('train', 'ft')), transform=transforms, download=False)
-        elif 'h5' in file_name:
-            dataset = H5Dataset(file_path, transform=transforms)
-        else:
-            dataset = ImageDataset(file_path, transform=transforms)
+        dataset = torchvision.datasets.ImageFolder(file_path, transform=transforms)
         subset_path = self.cfg.TRAIN.SUBSET_FILE_PATH if stage.lower() in ('train', 'ft') else self.cfg.VAL.SUBSET_FILE_PATH
         if subset_path != '':
             with open(subset_path) as f:

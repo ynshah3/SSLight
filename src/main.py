@@ -44,17 +44,19 @@ def run_task(cfg):
 
 
 def main_worker(gpu, ngpus_per_node, cfg):
-    cudnn.benchmark = True
-    trainer_class = engine.__dict__[cfg.SSL_METHOD + 'Trainer']
-    trainer = trainer_class(gpu, ngpus_per_node, cfg)
-    trainer.resume_model()
-    start_epoch = trainer.start_epoch
+    for region in [4, 5, 6, 7]:
+        print(f'performing region {region}')
+        cudnn.benchmark = True
+        trainer_class = engine.__dict__[cfg.SSL_METHOD + 'Trainer']
+        trainer = trainer_class(gpu, ngpus_per_node, cfg)
+        trainer.resume_model()
+        start_epoch = 0
 
-    for epoch in range(start_epoch, cfg.SOLVER.TOTAL_EPOCHS):
-        trainer.train_epoch(epoch)
-        trainer.save_checkpoint(epoch)
-        trainer.knn_validate(epoch)
-        dist.barrier()
+        for i in range(40):
+            trainer.train_epoch(i, region)
+            trainer.save_checkpoint(i)
+            trainer.knn_validate(i)
+        # dist.barrier()
 
 
 def main():

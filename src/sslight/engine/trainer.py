@@ -16,6 +16,7 @@ from sslight.utils.optimizer import LARS
 from sslight.utils.scheduler import cosine_scheduler, multistep_scheduler
 from sslight.utils.param_utils import get_params, has_batchnorms
 from sslight.utils.param_utils import num_of_trainable_params
+from torch.nn.utils import prune
 
 from data.transforms import *
 from data.loader  import ImageDatasetLoader
@@ -153,6 +154,18 @@ class Trainer():
         self.stage = self.cfg.STAGE
         self.data_ins = ImageDatasetLoader(self.cfg, self.rank)
         self.transforms = data_aug(self.cfg)
+        self.train_transforms = transforms.Compose([
+            transforms.RandomResizedCrop(224, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=self.cfg.DATA.MEAN, std=self.cfg.DATA.STD)]
+        )
+        self.val_transforms = transforms.Compose([
+            transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=self.cfg.DATA.MEAN, std=self.cfg.DATA.STD)]
+        )
         logger.info('START DATA LOADING ... ')
         self.loader, self.num_examples = self.data_ins.get_loader(self.stage, self.train_batch_size, self.transforms)
 
@@ -186,33 +199,32 @@ class Trainer():
             torch.cuda.set_device(self.gpu)
             self.model = self.model.cuda(self.gpu)
             
-    def resume_model(self):
+    def resume_model(self, ):
         if self.resume_path == "":
             self.start_epoch = 0
             logger.info("--> No loaded checkpoint!")
         else:
-            if osp.isfile(self.resume_path):
-                logger.info(f"=> loading checkpoint {self.resume_path}")
-                model_path = self.resume_path
-                if self.gpu is None:
-                    checkpoint = torch.load(model_path)
-                else:
-                    # Map model to be loaded to specified single gpu.
-                    loc = 'cuda:{}'.format(self.gpu)
-                    checkpoint = torch.load(model_path, map_location=loc)
-
-                self.start_epoch = checkpoint['epoch']
-                msg = self.model.load_state_dict(checkpoint['state_dict'], strict=False)
-                self.optimizer.load_state_dict(checkpoint['optimizer'])
-                if self.cfg.SSL_METHOD.lower() == 'dino' and 'loss' in checkpoint:
-                    self.loss.load_state_dict(checkpoint['loss'])
-                self.steps = checkpoint['steps']
-                if self.cfg.USE_FP16 is True:
-                    self.fp16_scaler.load_state_dict(checkpoint['fp16_scaler'])
-
-                logger.info(f"--> Loaded checkpoint '{model_path}' (epoch {self.start_epoch}), with msg: {msg}")
+            logger.info(f"=> loading checkpoint {self.resume_path}")
+            model_path = self.resume_path
+            if self.gpu is None:
+                checkpoint = torch.load(model_path)
             else:
-                logger.info(f"=> no checkpoint found at {self.resume_path}")
+                # Map model to be loaded to specified single gpu.
+                loc = 'cuda:{}'.format(self.gpu)
+                checkpoint = torch.hub.load_state_dict_from_url(f'https://storage.googleapis.com/neurop/dino_r18_sslight.pth.tar', map_location=loc)
+
+            self.start_epoch = 0
+            self.model = torch.nn.DataParallel(self.model)
+            
+            msg = self.model.load_state_dict(checkpoint['state_dict'], strict=True)
+            # self.optimizer.load_state_dict(checkpoint['optimizer'])
+            # if self.cfg.SSL_METHOD.lower() == 'dino' and 'loss' in checkpoint:
+                # self.loss.load_state_dict(checkpoint['loss'])
+            self.steps = 0
+            if self.cfg.USE_FP16 is True:
+                self.fp16_scaler.load_state_dict(checkpoint['fp16_scaler'])
+
+            logger.info(f"--> Loaded checkpoint '{model_path}' (epoch {self.start_epoch}), with msg: {msg}")
   
     def save_checkpoint(self, epoch):
         state = {
@@ -237,6 +249,48 @@ class Trainer():
                 self.cfg.SSL_METHOD + '_' + self.cfg.MODEL.BACKBONE_ARCH + '_last_ckpt.pth.tar'))
         if self.queue is not None:
             torch.save({"queue": self.queue}, self.queue_path)
+            
+    def finetune(self, printer=print):
+        self.model.train()
+
+        criterion = nn.CrossEntropyLoss().cuda(self.gpu)
+        sup_accu_meter = logging.AverageMeter()
+
+        
+        params_groups = get_params(self.cfg, [self.model])
+        optimizer = torch.optim.SGD(list(self.model.module.student.parameters()) + list(self.model.module.classifier.parameters()
+                                                                                       ), lr=0.005, momentum=0.9, weight_decay=0)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 50)
+
+        start_epoch = 0
+
+        for epoch in range(start_epoch, 50):
+            # train
+            self.model.train()
+            for i, (images, labels) in enumerate(self.loader):
+                ##############################################
+                # Preparing data
+                ##############################################
+                samples = images.cuda(self.gpu, non_blocking=True).contiguous()
+                labels  = labels.cuda(self.gpu, non_blocking=True).contiguous()
+                # index   = index.cuda(self.gpu, non_blocking=True).contiguous()
+
+                feats, sup_logits = self.model(samples, extract_features_only=True)
+                loss = criterion(sup_logits, labels)
+                sup_pred = torch.max(sup_logits, dim=-1)[1]
+                sup_accu = torch.eq(sup_pred.long(), labels.long()).float().mean()
+                sup_accu_meter.update(sup_accu.item(), len(samples))
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                if i % 20 == 0:
+                    metric_info = \
+                    f'Epoch: [{epoch}][{i}/{len(self.loader)}]\t' + \
+                    f'Loss {loss:.4f}\t' + \
+                    f'Acc {sup_accu:.4f} ' + \
+                    f'({(sup_accu_meter.sum / sup_accu_meter.count):.4f})'
+                    
+                    logger.info(metric_info)
 
     @torch.no_grad()
     def knn_validate(self, epoch, printer=print):
@@ -246,13 +300,13 @@ class Trainer():
             sup_accu_meter = logging.AverageMeter()
 
         with torch.no_grad():
-            for i, (index, images, labels) in tqdm(enumerate(self.val_loader), disable=(self.rank != 0)):
+            for i, (images, labels) in tqdm(enumerate(self.val_loader), disable=(self.rank != 0)):
                 ##############################################
                 # Preparing data
                 ##############################################
                 samples = images[0].cuda(self.gpu, non_blocking=True).contiguous()
                 labels  = labels.cuda(self.gpu, non_blocking=True).contiguous()
-                index   = index.cuda(self.gpu, non_blocking=True).contiguous()
+                # index   = index.cuda(self.gpu, non_blocking=True).contiguous()
 
                 feats, sup_logits = self.model(samples, extract_features_only=True)
                 feats = torch.cat([feats, labels[:,None]], -1).float()
@@ -266,30 +320,8 @@ class Trainer():
                     features = torch.zeros(len(self.val_loader.dataset), feats.shape[-1])
                     features = features.cuda(non_blocking=True)
                     print(f"Storing features into tensor of shape {features.shape}")
-
-                # get indexes from all processes
-                y_all = torch.empty(self.cfg.WORLD_SIZE, index.size(0), dtype=index.dtype, device=index.device)
-                y_l = list(y_all.unbind(0))
-                y_all_reduce = torch.distributed.all_gather(y_l, index, async_op=True)
-                y_all_reduce.wait()
-                index_all = torch.cat(y_l)
-                # share features between processes
-                feats_all = torch.empty(
-                    self.cfg.WORLD_SIZE,
-                    feats.size(0),
-                    feats.size(1),
-                    dtype=feats.dtype,
-                    device=feats.device,
-                )
-                output_l = list(feats_all.unbind(0))
-                output_all_reduce = torch.distributed.all_gather(output_l, feats, async_op=True)
-                output_all_reduce.wait()
-                # update storage feature matrix
-                if self.rank == 0:
-                    features.index_copy_(0, index_all, torch.cat(output_l))
-                    # features.index_copy_(0, index_all.cpu(), torch.cat(output_l).cpu())
-                if self.cfg.DISTRIBUTED:
-                    dist.barrier()
+                    
+                features[i*128:i*128 + feats.size(0)] = feats
         
         if self.cfg.TRAIN.JOINT_LINEAR_PROBE:
             global_stats = torch.tensor([sup_accu_meter.sum, sup_accu_meter.count], device=self.gpu)
