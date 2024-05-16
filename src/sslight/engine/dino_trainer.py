@@ -38,9 +38,6 @@ class DINOTrainer(Trainer):
 
         self.model.train()
         
-        torch.save(self.model.module.student.backbone.encoder.state_dict(), 'resnet_trained.pt')
-        print('saved model')
-        
         layer = self.model.module.student.backbone.encoder[region]
         conv_layers = [module for module in layer.modules() if isinstance(module, torch.nn.Conv2d)]
 

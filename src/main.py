@@ -44,7 +44,7 @@ def run_task(cfg):
 
 
 def main_worker(gpu, ngpus_per_node, cfg):
-    for region in [4, 5, 6, 7]:
+    for region in [6, 7]:
         print(f'performing region {region}')
         cudnn.benchmark = True
         trainer_class = engine.__dict__[cfg.SSL_METHOD + 'Trainer']
